@@ -9,7 +9,7 @@ namespace Orleans.PubSub;
 /// </summary>
 public class PubSubGrain : Grain, IPubSubGrain
 {
-    private readonly HashSet<string> _subs = new();
+    private readonly Dictionary<string, IPerSiloPubSubGrain> _subs = new(StringComparer.OrdinalIgnoreCase);
     private string? _topic;
     private readonly IGrainFactory _factory;
 
@@ -26,7 +26,14 @@ public class PubSubGrain : Grain, IPubSubGrain
 
     public Task AddSilo(SiloAddress siloAddress)
     {
-        _subs.Add(siloAddress.Topic(_topic!));
+        var key = siloAddress.Topic(_topic!);
+
+        if (_subs.ContainsKey(key))
+        {
+            return Task.CompletedTask;
+        }
+
+        _subs.Add(key, _factory.GetGrain<IPerSiloPubSubGrain>(key));
 
         return Task.CompletedTask;
     }
@@ -40,10 +47,15 @@ public class PubSubGrain : Grain, IPubSubGrain
 
     public Task Publish(byte[] message)
     {
-        var tasks = new List<Task>();
-        foreach (var sub in _subs)
+        if (_subs.Count == 0)
         {
-            tasks.Add(_factory.GetGrain<IPerSiloPubSubGrain>(sub).Publish(message));
+            return Task.CompletedTask;
+        }
+
+        var tasks = new List<Task>();
+        foreach (var grain in _subs.Values)
+        {
+            tasks.Add(grain.Publish(message));
         }
         return Task.WhenAll(tasks);
     }

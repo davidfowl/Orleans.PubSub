@@ -2,6 +2,6 @@
 
 public interface IPubSub
 {
-    Task PublishAsync(string topic, byte[] message);
-    Task<IAsyncDisposable> SubscribeAsync(string topic, Func<byte[], Task> onMessage);
+    Task PublishAsync(byte[] message);
+    Task<IAsyncDisposable> SubscribeAsync(Func<byte[], Task> onMessage);
 }

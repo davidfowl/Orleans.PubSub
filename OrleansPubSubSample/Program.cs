@@ -5,12 +5,13 @@ using Orleans;
 using Orleans.Hosting;
 using Orleans.PubSub;
 using Orleans.Placement;
+using Orleans.Runtime;
 
 using var host = new HostBuilder()
     .ConfigureServices(services =>
     {
         services.AddSingleton<ILocalMessageBus, SiloAwareMessageBus>();
-        services.AddSingleton<IPubSub, PubSub>();
+        services.AddSingleton<IPubSubProvider, PubSubProvider>();
     })
     .UseOrleans(builder => builder.UseLocalhostClustering()
                                   .AddPlacementDirector<FixedPlacement, FixedPlacementDirector>())
@@ -18,20 +19,28 @@ using var host = new HostBuilder()
 
 await host.StartAsync();
 
-var pubsub = host.Services.GetRequiredService<IPubSub>();
+var siloDetails = host.Services.GetRequiredService<ILocalSiloDetails>();
+var provider = host.Services.GetRequiredService<IPubSubProvider>();
 
-var topic = "Chat";
+var pubsub = provider.Create("Chat");
 
-var sub = await pubsub.SubscribeAsync(topic, message =>
+var sub = await pubsub.SubscribeAsync(message =>
 {
     Console.WriteLine(Encoding.ASCII.GetString(message));
     return Task.CompletedTask;
 });
 
-var msg = Encoding.ASCII.GetBytes("Hello World");
+while (true)
+{
+    Console.Write($"{siloDetails.SiloAddress}> ");
+    var line = Console.ReadLine();
+    if (line is null) break;
 
-await pubsub.PublishAsync(topic, msg);
+    var msg = Encoding.ASCII.GetBytes(line);
+
+    await pubsub.PublishAsync(msg);
+}
 
 await sub.DisposeAsync();
 
-host.WaitForShutdown();
+await host.StopAsync();

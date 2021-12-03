@@ -10,7 +10,7 @@ using Orleans.Runtime;
 using var host = new HostBuilder()
     .ConfigureServices(services =>
     {
-        services.AddSingleton<ILocalMessageBus, SiloAwareMessageBus>();
+        services.AddSingleton<ILocalMessageBus, LocalMessageBus>();
         services.AddSingleton<IPubSubProvider, PubSubProvider>();
     })
     .UseOrleans(builder => builder.UseLocalhostClustering()

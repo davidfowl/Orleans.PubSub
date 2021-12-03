@@ -1,40 +1,45 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using Orleans.Runtime;
 
 namespace Orleans.PubSub;
 
-public class SiloAwareMessageBus : ILocalMessageBus
+public class LocalMessageBus : ILocalMessageBus
 {
     private readonly ILocalSiloDetails _localSiloDetails;
-    private readonly ConcurrentDictionary<string, Func<byte[], Task>> _subs = new();
+    private readonly ConcurrentDictionary<string, ImmutableArray<Func<byte[], Task>>> _subs = new();
 
-    public SiloAwareMessageBus(ILocalSiloDetails localSiloDetails)
+    public LocalMessageBus(ILocalSiloDetails localSiloDetails)
     {
         _localSiloDetails = localSiloDetails;
     }
 
-    public Task PublishAsync(string topic, byte[] message)
+    public async Task PublishAsync(string topic, byte[] message)
     {
         topic = _localSiloDetails.SiloAddress.Topic(topic);
 
-        if (_subs.TryGetValue(topic, out var cb))
+        if (_subs.TryGetValue(topic, out var callbacks))
         {
-            return cb(message);
+            foreach (var cb in callbacks)
+            {
+                await cb(message);
+            }
         }
-        return Task.CompletedTask;
     }
 
     public IDisposable Subscribe(string topic, Func<byte[], Task> onMessage)
     {
         topic = _localSiloDetails.SiloAddress.Topic(topic);
 
-        var cb = _subs.AddOrUpdate(topic, key => onMessage, (key, existing) => existing += onMessage);
+        var callbacks = _subs.GetOrAdd(topic, static _ => new());
+
+        callbacks = callbacks.Add(onMessage);
 
         return new Disposable(() =>
         {
-            cb -= onMessage;
+            callbacks = callbacks.Remove(onMessage);
 
-            if (cb is null)
+            if (callbacks is { Length: 0 })
             {
                 _subs.TryRemove(topic, out _);
             }

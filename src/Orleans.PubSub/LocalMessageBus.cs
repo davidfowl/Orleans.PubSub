@@ -22,13 +22,13 @@ public class LocalMessageBus : ILocalMessageBus
         {
             var array = slot.Array;
 
-            var list = new List<Task>(array.Length);
-            foreach (var cb in array)
+            var tasks = new Task[array.Length];
+            for (int i = 0; i < array.Length; i++)
             {
-                list.Add(cb(message));
+                tasks[i] = array[i](message);
             }
 
-            return Task.WhenAll(list);
+            return Task.WhenAll(tasks);
 
         }
         return Task.CompletedTask;

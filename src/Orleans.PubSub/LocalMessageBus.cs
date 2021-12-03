@@ -38,12 +38,18 @@ public class LocalMessageBus : ILocalMessageBus
     {
         topic = _localSiloDetails.SiloAddress.Topic(topic);
 
-        var slot = _subs.GetOrAdd(topic, static _ => new());
+        Slot<Func<byte[], Task>> slot;
 
-        lock (slot)
+        do
         {
-            slot.Array = slot.Array.Add(onMessage);
-        }
+            slot = _subs.GetOrAdd(topic, static _ => new());
+
+            lock (slot)
+            {
+                slot.Array = slot.Array.Add(onMessage);
+            }
+
+        } while (slot.Valid);
 
         return new Disposable(() =>
         {
@@ -51,13 +57,14 @@ public class LocalMessageBus : ILocalMessageBus
             {
                 slot.Array = slot.Array.Remove(onMessage);
 
-                // TODO: Address memory leak with empty slots
-                //if (slot is { Array.Length: 0 })
-                //{
-                //    slot.Array = default;
-
-                //    _subs.TryRemove(topic, out _);
-                //}
+                if (slot is { Array.IsEmpty: true })
+                {
+                    if (_subs.TryRemove(topic, out var s))
+                    {
+                        // Mark this slot as invalid since we're removing it
+                        s.Valid = false;
+                    }
+                }
             }
         });
     }
@@ -65,6 +72,8 @@ public class LocalMessageBus : ILocalMessageBus
     class Slot<T>
     {
         public ImmutableArray<T> Array = ImmutableArray<T>.Empty;
+
+        public bool Valid;
     }
 
     private class Disposable : IDisposable

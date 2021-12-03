@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using Orleans.Runtime;
 
 namespace Orleans.PubSub;
@@ -6,7 +7,7 @@ namespace Orleans.PubSub;
 public class LocalMessageBus : ILocalMessageBus
 {
     private readonly ILocalSiloDetails _localSiloDetails;
-    private readonly ConcurrentDictionary<string, List<Func<byte[], Task>>> _subs = new();
+    private readonly ConcurrentDictionary<string, Slot<Func<byte[], Task>>> _subs = new();
 
     public LocalMessageBus(ILocalSiloDetails localSiloDetails)
     {
@@ -17,18 +18,18 @@ public class LocalMessageBus : ILocalMessageBus
     {
         topic = _localSiloDetails.SiloAddress.Topic(topic);
 
-        if (_subs.TryGetValue(topic, out var callbacks))
+        if (_subs.TryGetValue(topic, out var slot))
         {
-            lock (callbacks)
-            {
-                var list = new List<Task>(callbacks.Count);
-                foreach (var cb in callbacks)
-                {
-                    list.Add(cb(message));
-                }
+            var array = slot.Array;
 
-                return Task.WhenAll(list);
+            var list = new List<Task>(array.Length);
+            foreach (var cb in array)
+            {
+                list.Add(cb(message));
             }
+
+            return Task.WhenAll(list);
+
         }
         return Task.CompletedTask;
     }
@@ -37,25 +38,33 @@ public class LocalMessageBus : ILocalMessageBus
     {
         topic = _localSiloDetails.SiloAddress.Topic(topic);
 
-        var callbacks = _subs.GetOrAdd(topic, static _ => new());
+        var slot = _subs.GetOrAdd(topic, static _ => new());
 
-        lock (callbacks)
+        lock (slot)
         {
-            callbacks.Add(onMessage);
+            slot.Array = slot.Array.Add(onMessage);
         }
 
         return new Disposable(() =>
         {
-            lock (callbacks)
+            lock (slot)
             {
-                callbacks.Remove(onMessage);
+                slot.Array = slot.Array.Remove(onMessage);
 
-                if (callbacks is { Count: 0 })
-                {
-                    _subs.TryRemove(topic, out _);
-                }
+                // TODO: Address memory leak with empty slots
+                //if (slot is { Array.Length: 0 })
+                //{
+                //    slot.Array = default;
+
+                //    _subs.TryRemove(topic, out _);
+                //}
             }
         });
+    }
+
+    class Slot<T>
+    {
+        public ImmutableArray<T> Array = ImmutableArray<T>.Empty;
     }
 
     private class Disposable : IDisposable
